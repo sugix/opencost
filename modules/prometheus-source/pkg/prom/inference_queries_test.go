@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/opencost/opencost/core/pkg/source"
 )
 
 // recordingPromClient captures the PromQL of every query it is asked to run and
@@ -101,19 +103,19 @@ func TestQueryInferenceProcessingTime_MetricSelection(t *testing.T) {
 			queries := client.recorded()
 
 			// queryCounterDelta issues one query pinned to the start of the window and
-			// one pinned to the end; both must read the same metric.
-			if len(queries) != 2 {
-				t.Fatalf("expected 2 boundary queries, got %d: %v", len(queries), queries)
-			}
-
+			// one pinned to the end, per engine; both vLLM queries must read the metric.
+			reads := 0
 			for i, q := range queries {
-				if !strings.Contains(q, tc.want) {
-					t.Errorf("boundary query %d does not read %s: %s", i, tc.want, q)
+				if strings.Contains(q, tc.want) {
+					reads++
 				}
 				if tc.rejected != "" && strings.Contains(q, tc.rejected) {
 					t.Errorf("boundary query %d reads %s, which is seconds-per-token rather than a duration: %s",
 						i, tc.rejected, q)
 				}
+			}
+			if reads != 2 {
+				t.Errorf("expected 2 boundary queries reading %s, got %d: %v", tc.want, reads, queries)
 			}
 		})
 	}
@@ -231,15 +233,17 @@ func TestQueryInferenceTokens_ReadsVLLMAndSGLang(t *testing.T) {
 	}
 }
 
-// TestQueryInferenceVLLMOnly_SkipsSGLangServedModels asserts the vLLM-only
-// timing and cache-config queries drop models that SGLang also serves, so a
-// model served by both engines falls back to the multiplier split and keeps
-// SGLang's cache hits, instead of applying vLLM's timing ratio or
-// prefix-caching setting to SGLang's share.
-func TestQueryInferenceVLLMOnly_SkipsSGLangServedModels(t *testing.T) {
+// TestQueryInferenceTiming_SkipsModelsServedByBothEngines asserts each engine's
+// timing is read only for models the other engine does not also serve, and the
+// vLLM-only cache-config query skips SGLang-served models. A model served by
+// both engines then falls back to the multiplier split and keeps SGLang's cache
+// hits, instead of applying one engine's timing ratio or prefix-caching setting
+// to the other engine's share.
+func TestQueryInferenceTiming_SkipsModelsServedByBothEngines(t *testing.T) {
 	start := time.Now().Add(-time.Hour)
 	end := time.Now()
-	const filter = "unless on (model_name, namespace) sum by (model_name, namespace) (last_over_time(sglang:prompt_tokens_total["
+	const skipSGLang = `unless on (canonical_model_name, namespace) label_replace(sum by (model_name, namespace) (last_over_time(sglang:prompt_tokens_total[`
+	const skipVLLM = `unless on (canonical_model_name, namespace) label_replace(sum by (model_name, namespace) (last_over_time(vllm:prompt_tokens_total[`
 
 	querier, client := newRecordingQuerier()
 	if _, err := querier.QueryInferenceInputProcessingTime(start, end).Await(); err != nil {
@@ -254,22 +258,94 @@ func TestQueryInferenceVLLMOnly_SkipsSGLangServedModels(t *testing.T) {
 
 	filtered := 0
 	for _, q := range client.recorded() {
+		isStart := strings.Contains(q, "[2m] @")
 		switch {
-		case strings.Contains(q, "group_left(enable_prefix_caching)") && strings.Contains(q, filter):
+		case strings.Contains(q, "group_left(enable_prefix_caching)") && strings.Contains(q, skipSGLang):
 			// The cache-config join. Its diagnostic re-runs the join without the
 			// filter to tell an expected empty result from a pod-label mismatch.
 			filtered++
-		case strings.Contains(q, "_time_seconds_sum[2m] @"):
+		case isStart:
 			// Start-of-window boundary: deltas are keyed on the end query, so no filter needed.
-		case strings.Contains(q, "_time_seconds_sum["):
-			if !strings.Contains(q, filter) {
-				t.Errorf("end-of-window timing query does not skip SGLang-served models: %s", q)
+		case strings.Contains(q, "vllm:request_") && strings.Contains(q, "_time_seconds_sum["):
+			if !strings.Contains(q, skipSGLang) {
+				t.Errorf("vLLM timing query does not skip SGLang-served models: %s", q)
+			}
+			filtered++
+		case strings.Contains(q, "sglang:forward_execution_seconds_total{"):
+			if !strings.Contains(q, skipVLLM) {
+				t.Errorf("SGLang timing query does not skip vLLM-served models: %s", q)
 			}
 			filtered++
 		}
 	}
-	if filtered != 3 {
-		t.Errorf("expected 3 filtered queries (input end, output end, cache config), got %d", filtered)
+	if filtered != 5 {
+		t.Errorf("expected 5 filtered queries (input and output end, per engine, plus cache config), got %d", filtered)
+	}
+}
+
+// TestQueryInferenceTiming_ReadsSGLangForwardTime pins the SGLang processing-time
+// selectors: prefill ("extend") on non-decode workers, and decode plus the
+// speculative-decoding categories on non-prefill workers. "mixed" batches carry
+// both phases and are left out of both sides.
+func TestQueryInferenceTiming_ReadsSGLangForwardTime(t *testing.T) {
+	start := time.Now().Add(-time.Hour)
+	end := time.Now()
+
+	querier, client := newRecordingQuerier()
+	if _, err := querier.QueryInferenceInputProcessingTime(start, end).Await(); err != nil {
+		t.Fatalf("input query returned error: %v", err)
+	}
+	if _, err := querier.QueryInferenceOutputProcessingTime(start, end).Await(); err != nil {
+		t.Fatalf("output query returned error: %v", err)
+	}
+
+	queries := strings.Join(client.recorded(), "\n")
+	for _, want := range []string{
+		`sglang:forward_execution_seconds_total{category="extend", engine_type!="decode"}[`,
+		`sglang:forward_execution_seconds_total{category=~"decode|target_verify|draft_extend_v2|eagle_draft|eagle_draft_extend|frozen_kv_draft", engine_type!="prefill"}[`,
+	} {
+		if strings.Count(queries, want) != 2 {
+			t.Errorf("expected start and end queries reading %s", want)
+		}
+	}
+	if strings.Contains(queries, "mixed") {
+		t.Errorf("mixed batches must not be counted as either phase")
+	}
+}
+
+// TestQueryInferenceTiming_SumsSGLangPhases asserts SGLang forward time feeds the
+// input and output processing times, which the calculator turns into a
+// compute_time split.
+func TestQueryInferenceTiming_SumsSGLangPhases(t *testing.T) {
+	start := time.Now().Add(-time.Hour)
+	end := time.Now()
+	key := modelNamespaceKey("m", "ns")
+	values := map[string]string{
+		`sglang:forward_execution_seconds_total{category="extend", engine_type!="decode"}`:                                                                                "12",
+		`sglang:forward_execution_seconds_total{category=~"decode|target_verify|draft_extend_v2|eagle_draft|eagle_draft_extend|frozen_kv_draft", engine_type!="prefill"}`: "48",
+	}
+
+	in, err := newValueQuerier(values).QueryInferenceInputProcessingTime(start, end).Await()
+	if err != nil {
+		t.Fatalf("input query returned error: %v", err)
+	}
+	out, err := newValueQuerier(values).QueryInferenceOutputProcessingTime(start, end).Await()
+	if err != nil {
+		t.Fatalf("output query returned error: %v", err)
+	}
+
+	sum := func(res []*source.InferenceProcessingTimeResult) float64 {
+		total := 0.0
+		for _, r := range res {
+			total += r.Values[key]
+		}
+		return total
+	}
+	if got := sum(in); got != 12 {
+		t.Errorf("input processing time = %v, want 12", got)
+	}
+	if got := sum(out); got != 48 {
+		t.Errorf("output processing time = %v, want 48", got)
 	}
 }
 
@@ -292,11 +368,17 @@ func TestQueryInference_AppliesClusterFilter(t *testing.T) {
 	if _, err := querier.QueryInferenceInputProcessingTime(start, end).Await(); err != nil {
 		t.Fatalf("input query returned error: %v", err)
 	}
+	if _, err := querier.QueryInferenceOutputProcessingTime(start, end).Await(); err != nil {
+		t.Fatalf("output query returned error: %v", err)
+	}
 	if _, err := querier.QueryInferenceCacheConfig(end).Await(); err != nil {
 		t.Fatalf("cache config query returned error: %v", err)
 	}
 
 	want := []string{
+		`sglang:forward_execution_seconds_total{category="extend", engine_type!="decode", ` + clusterFilter + `}[`,
+		`engine_type!="prefill", ` + clusterFilter + `}[`,
+		`last_over_time(vllm:prompt_tokens_total{` + clusterFilter + `}[`,
 		`vllm:prompt_tokens_total{` + clusterFilter + `}[`,
 		`sglang:prompt_tokens_total{engine_type!="decode", ` + clusterFilter + `}[`,
 		`vllm:request_prefill_time_seconds_sum{` + clusterFilter + `}[`,
@@ -310,7 +392,7 @@ func TestQueryInference_AppliesClusterFilter(t *testing.T) {
 		}
 	}
 	for _, q := range client.recorded() {
-		for _, metric := range []string{"vllm:prompt_tokens_total", "sglang:prompt_tokens_total", "vllm:cache_config_info"} {
+		for _, metric := range []string{"vllm:prompt_tokens_total", "sglang:prompt_tokens_total", "vllm:cache_config_info", "sglang:forward_execution_seconds_total", "vllm:request_decode_time_seconds_sum"} {
 			if strings.Contains(q, metric+"[") || strings.Contains(q, metric+")") {
 				t.Errorf("query reads %s without the cluster filter: %s", metric, q)
 			}
@@ -399,8 +481,8 @@ func TestQueryInferenceProcessingTime_GroupsByModelAndNamespace(t *testing.T) {
 	}
 
 	queries := client.recorded()
-	if len(queries) != 4 {
-		t.Fatalf("expected 4 boundary queries across both metrics, got %d", len(queries))
+	if len(queries) != 8 {
+		t.Fatalf("expected 8 boundary queries (2 phases x 2 engines x start/end), got %d", len(queries))
 	}
 
 	for i, q := range queries {

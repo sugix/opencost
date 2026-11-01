@@ -73,7 +73,8 @@ func (c *Calculator) calculateModelCosts(m *InferenceCost) {
 	}
 }
 
-// calculateComputeTimeSplit allocates costs proportionally by vLLM processing time.
+// calculateComputeTimeSplit allocates costs proportionally by prefill and decode
+// processing time (vLLM request durations, or SGLang forward-pass GPU time).
 // Uses PromptTokens (delivered input tokens) as the input denominator.
 func (c *Calculator) calculateComputeTimeSplit(m *InferenceCost) {
 	totalTime := m.InputProcessingTime + m.OutputProcessingTime

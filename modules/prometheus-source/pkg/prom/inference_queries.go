@@ -20,10 +20,15 @@ import (
 // processed (not decode workers) and generation tokens where they are produced
 // (not prefill workers), so each request is counted once.
 //
-// SGLang has no prefill-time counter or cache_config_info equivalent, so the
-// processing-time and cache-config queries read vLLM only, and skip models that
-// SGLang also serves (see notSGLangServed): SGLang models fall back to the
-// multiplier split, and their cache savings come from cached tokens.
+// Processing time is read per engine, and each engine's timing only for models
+// that the other engine does not also serve (see notServedBy): the calculator
+// splits cost by the ratio of input to output time, which is only meaningful
+// within one engine. A model served by both engines gets no timing and falls
+// back to the multiplier split.
+//
+// SGLang has no cache_config_info equivalent, so the cache-config query reads
+// vLLM only and skips SGLang-served models; their cache savings come from
+// cached tokens.
 var (
 	inferencePromptTokenMetrics = []string{
 		"vllm:prompt_tokens_total",
@@ -42,14 +47,55 @@ var (
 	}
 )
 
-// notSGLangServed returns a PromQL suffix that drops (model_name, namespace)
-// series also served by SGLang, using the given range and @ modifier for the
-// SGLang side. Appended to the vLLM-only timing and cache-config queries so
-// vLLM's timing or prefix-caching setting is not applied to SGLang's share of a
-// model served by both engines.
-func notSGLangServed(clusterFilter, rangeAndAt string) string {
-	return fmt.Sprintf(` unless on (model_name, namespace) sum by (model_name, namespace) (last_over_time(%s%s))`,
-		withClusterFilter("sglang:prompt_tokens_total", clusterFilter), rangeAndAt)
+const (
+	vllmServedMetric   = "vllm:prompt_tokens_total"
+	sglangServedMetric = "sglang:prompt_tokens_total"
+)
+
+// timingSource is one engine's processing-time counter, read only for models
+// that the other engine does not also serve.
+type timingSource struct {
+	selector       string
+	skipServedFrom string // prompt counter of the other engine
+}
+
+var (
+	// SGLang reports GPU busy time per forward-pass category, only when started
+	// with SGLANG_ENABLE_METRICS_DEVICE_TIMER=true. "extend" is prefill; decode
+	// and the speculative-decoding categories produce output. "mixed" batches
+	// (chunked prefill alongside decode) cannot be split and are left out, as
+	// are "idle" (data-parallel padding) and other non-serving modes.
+	inferenceInputTimeSources = []timingSource{
+		{"vllm:request_prefill_time_seconds_sum", sglangServedMetric},
+		{`sglang:forward_execution_seconds_total{category="extend", engine_type!="decode"}`, vllmServedMetric},
+	}
+	// DECODE-phase seconds. NOT vllm:request_time_per_output_token_seconds_sum,
+	// which sums per-request mean seconds-per-token rather than a duration.
+	inferenceOutputTimeSources = []timingSource{
+		{"vllm:request_decode_time_seconds_sum", sglangServedMetric},
+		{`sglang:forward_execution_seconds_total{category=~"decode|target_verify|draft_extend_v2|eagle_draft|eagle_draft_extend|frozen_kv_draft", engine_type!="prefill"}`, vllmServedMetric},
+	}
+)
+
+// notServedBy drops from expr the (model, namespace) series also served by the
+// engine whose prompt counter is servedMetric, read with the given range and @
+// modifier. It keeps one engine's timing or prefix-caching setting from being
+// applied to the other engine's share of a model served by both.
+//
+// Models are matched on the name after the last "/", as the collector
+// reconciles them, so "org/model" from one engine and "model" from the other
+// count as the same model. The result keeps model_name and adds a
+// canonical_model_name label.
+func notServedBy(expr, servedMetric, clusterFilter, rangeAndAt string) string {
+	served := fmt.Sprintf(`sum by (model_name, namespace) (last_over_time(%s%s))`,
+		withClusterFilter(servedMetric, clusterFilter), rangeAndAt)
+	return fmt.Sprintf(`%s unless on (canonical_model_name, namespace) %s`, withCanonicalModelName(expr), withCanonicalModelName(served))
+}
+
+// withCanonicalModelName adds a canonical_model_name label holding model_name
+// after its last "/".
+func withCanonicalModelName(expr string) string {
+	return fmt.Sprintf(`label_replace(%s, "canonical_model_name", "$1", "model_name", "(?:.*/)?(.*)")`, expr)
 }
 
 // withClusterFilter adds the configured cluster filter (e.g. cluster_id="a",
@@ -115,7 +161,7 @@ func (pds *PrometheusMetricsQuerier) QueryInferenceInputProcessingTime(start, en
 	resultsChan := make(source.QueryResultsChan, 1)
 
 	go func() {
-		values, err := queryVLLMOnlyCounterDelta(ctx, "vllm:request_prefill_time_seconds_sum", start, end)
+		values, err := queryTimingDeltaSum(ctx, inferenceInputTimeSources, start, end)
 		if err != nil {
 			resultsChan <- &source.QueryResults{Error: err}
 			return
@@ -135,9 +181,7 @@ func (pds *PrometheusMetricsQuerier) QueryInferenceOutputProcessingTime(start, e
 	resultsChan := make(source.QueryResultsChan, 1)
 
 	go func() {
-		// DECODE-phase seconds. NOT request_time_per_output_token_seconds_sum, which
-		// sums per-request mean seconds-per-token rather than a duration.
-		values, err := queryVLLMOnlyCounterDelta(ctx, "vllm:request_decode_time_seconds_sum", start, end)
+		values, err := queryTimingDeltaSum(ctx, inferenceOutputTimeSources, start, end)
 		if err != nil {
 			resultsChan <- &source.QueryResults{Error: err}
 			return
@@ -270,16 +314,29 @@ func cacheConfigMapToQueryResults(configs map[string]*source.InferenceCacheConfi
 // which is the correct behaviour for pods that started mid-window.
 // Negative deltas (counter resets) are treated as resets and the delta is set to the end value (post-reset activity).
 func queryCounterDelta(ctx *Context, metric string, start, end time.Time) (map[string]float64, error) {
-	return queryCounterDeltaFiltered(ctx, metric, false, start, end)
+	return queryCounterDeltaFiltered(ctx, metric, "", start, end)
 }
 
-// queryVLLMOnlyCounterDelta is queryCounterDelta for vLLM-only metrics: it skips
-// models that SGLang also serves in the window (see notSGLangServed).
-func queryVLLMOnlyCounterDelta(ctx *Context, metric string, start, end time.Time) (map[string]float64, error) {
-	return queryCounterDeltaFiltered(ctx, metric, true, start, end)
+// queryTimingDeltaSum adds each engine's processing-time delta per
+// (model_name, namespace), reading each engine only for models the other
+// engine does not also serve in the window (see notServedBy).
+func queryTimingDeltaSum(ctx *Context, sources []timingSource, start, end time.Time) (map[string]float64, error) {
+	out := make(map[string]float64)
+	for _, src := range sources {
+		values, err := queryCounterDeltaFiltered(ctx, src.selector, src.skipServedFrom, start, end)
+		if err != nil {
+			return nil, err
+		}
+		for key, value := range values {
+			out[key] += value
+		}
+	}
+	return out, nil
 }
 
-func queryCounterDeltaFiltered(ctx *Context, metric string, skipSGLangServed bool, start, end time.Time) (map[string]float64, error) {
+// queryCounterDeltaFiltered is queryCounterDelta that, when skipServedFrom is
+// set, drops models also served by the engine whose prompt counter it names.
+func queryCounterDeltaFiltered(ctx *Context, metric, skipServedFrom string, start, end time.Time) (map[string]float64, error) {
 	startUnix := start.Unix()
 	// Clamp end to now: last_over_time with a future @ timestamp returns no results.
 	effectiveEnd := end
@@ -304,9 +361,9 @@ func queryCounterDeltaFiltered(ctx *Context, metric string, skipSGLangServed boo
 
 	// Query counter value at the end of the window.
 	endQuery := fmt.Sprintf(`sum by (model_name, namespace) (last_over_time(%s[%dm] @ %d))`, selector, windowMinutes, endUnix)
-	if skipSGLangServed {
+	if skipServedFrom != "" {
 		// Only the end query needs the filter: deltas are computed for end keys.
-		endQuery += notSGLangServed(ctx.config.ClusterFilter, fmt.Sprintf("[%dm] @ %d", windowMinutes, endUnix))
+		endQuery = notServedBy(endQuery, skipServedFrom, ctx.config.ClusterFilter, fmt.Sprintf("[%dm] @ %d", windowMinutes, endUnix))
 	}
 	endVals, err := queryInstantMetric(ctx, endQuery, effectiveEnd)
 	if err != nil {
@@ -369,7 +426,7 @@ func queryCacheConfigs(ctx *Context, t time.Time) (map[string]*source.InferenceC
 			* on (namespace, pod) group_left(enable_prefix_caching)
 			max by (namespace, pod, enable_prefix_caching) (%s)
 		)`, withClusterFilter("vllm:prompt_tokens_total", filter), withClusterFilter("vllm:cache_config_info", filter))
-	query := join + notSGLangServed(filter, "[5m]")
+	query := notServedBy(join, sglangServedMetric, filter, "[5m]")
 
 	raw, _, err := ctx.query(query, t)
 	if err != nil {

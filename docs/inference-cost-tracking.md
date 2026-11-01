@@ -5,7 +5,7 @@ OpenCost tracks infrastructure costs for AI inference workloads running models o
 ## Overview
 
 The inference cost tracking feature:
-1. Collects token metrics from [vLLM](https://vllm.ai/) and [SGLang](https://github.com/sgl-project/sglang) via Prometheus (`prompt_tokens_total`, `generation_tokens_total`, KV cache hits, and prefill/decode timing on vLLM)
+1. Collects token metrics from [vLLM](https://vllm.ai/) and [SGLang](https://github.com/sgl-project/sglang) via Prometheus (`prompt_tokens_total`, `generation_tokens_total`, KV cache hits, prefill/decode timing)
 2. Collects infrastructure costs (GPU, CPU, RAM, shared infra) from OpenCost's allocation layer
 3. Calculates blended and differentiated (input/output) cost per million tokens under two cost bases: `allocation` and `usage`
 4. Exports Inference Prometheus gauge metrics per model/namespace
@@ -98,9 +98,9 @@ The `allocation_method` label (present only when `phase` is set) indicates how t
 
 | Value | Meaning |
 |-------|---------|
-| `compute_time` | Cost split proportionally by vLLM prefill/decode time. KV cache utilization is reported separately in `llm_cache_savings_fraction`. |
+| `compute_time` | Cost split proportionally by prefill/decode time (vLLM timing, or SGLang forward time when its device timer is on). KV cache utilization is reported separately in `llm_cache_savings_fraction`. |
 | `prefix_caching_off` | Same time-based split but prefix caching is explicitly disabled on the vLLM instance — `llm_cache_savings_fraction` will be zero by configuration. |
-| `multiplier` | Fixed output/input cost ratio (vLLM timing metrics unavailable; default ratio 2.5×). |
+| `multiplier` | Fixed output/input cost ratio (timing metrics unavailable, or a model served by both engines; default ratio 2.5×). |
 | *(empty)* | No tokens processed or total cost is zero (allocation join failed — see [Labeling Requirements](#labeling-requirements)). |
 
 ```promql
@@ -346,7 +346,7 @@ OpenCost uses **compute-time based allocation** by default:
 
 `cacheSavingsFraction` is sourced directly from `vllm:prefix_cache_hits_total`, which reports cached **tokens** (not blocks). It is non-zero when cache hits were recorded in the window and the metric is available. `vllm:cache_config_info` is queried separately, but only to detect whether prefix caching is explicitly disabled — not for any arithmetic.
 
-**Fallback**: if [vLLM](https://vllm.ai/) timing metrics are unavailable, the Calculator falls back to a fixed multiplier (default 2.5×: output tokens cost 2.5× input tokens).
+**Fallback**: if timing metrics are unavailable (see [Compute-time split for SGLang](#compute-time-split-for-sglang)), the Calculator falls back to a fixed multiplier (default 2.5×: output tokens cost 2.5× input tokens).
 
 The `allocationMethod` field records which path was taken for each result (see [allocation_method values](#llm_input_cost_per_million_tokens)).
 
@@ -394,12 +394,26 @@ Requires SGLang started with `--enable-metrics`.
 | `sglang:prompt_tokens_total` | Token counts, blended cost rate |
 | `sglang:generation_tokens_total` | Token counts, blended cost rate |
 | `sglang:cached_tokens_total` | `cacheSavingsFraction` (summed over `cache_source`; optional) |
+| `sglang:forward_execution_seconds_total` | Compute-time allocation (input/output split; optional) |
 
 With prefill/decode disaggregation, both SGLang workers count every request, labelled `engine_type="prefill"` or `"decode"` (`"unified"` otherwise). Prompt and cached tokens are read from non-decode workers and generation tokens from non-prefill workers, so each request is counted once.
 
-SGLang has no prefill-time counter or `cache_config_info` equivalent, so SGLang models always use the `multiplier` input/output split, and `prefix_caching_off` is never detected for them.
+### Compute-time split for SGLang
 
-If vLLM and SGLang pods serve the same model in the same namespace, their token counts are added together, and the model uses the `multiplier` split with cache savings from both engines' cached tokens: vLLM's timing and prefix-caching setting are not applied to SGLang's share. This detection matches `model_name` exactly, so give both engines the same `--served-model-name`; if one reports `org/model` and the other `model`, their tokens are still combined, but the model may keep vLLM's timing split.
+SGLang reports GPU busy time per forward-pass `category` in `sglang:forward_execution_seconds_total`, but only when the server runs with the environment variable `SGLANG_ENABLE_METRICS_DEVICE_TIMER=true` (off by default; it adds a small timing overhead). When present, OpenCost uses it for the `compute_time` split:
+
+| Phase | Categories | Workers |
+|---|---|---|
+| Input (prefill) | `extend` | non-decode |
+| Output (decode) | `decode`, `target_verify`, and the speculative-decoding draft categories (`draft_extend_v2`, `eagle_draft`, `eagle_draft_extend`, `frozen_kv_draft`) | non-prefill |
+
+`mixed` batches (chunked prefill running alongside decode, with `--enable-mixed-chunk`) hold both phases and can't be split, so they are left out of both; `idle` (data-parallel padding) is left out too. The draft model's first extend after a prefill processes the prompt but is counted as output, which shifts the split slightly toward output when speculative decoding is on.
+
+These are GPU seconds, so a batch is counted once however many requests it holds; vLLM's per-request durations count each request in a batch. The calculator only uses the ratio of input to output time within one model, so the two units never mix, but the `compute_time` split of an SGLang model is not directly comparable with a vLLM model's. Without the device timer, SGLang models use the `multiplier` split.
+
+SGLang has no `cache_config_info` equivalent, so `prefix_caching_off` is never detected for SGLang models.
+
+If vLLM and SGLang pods serve the same model in the same namespace, their token counts are added together, and the model uses the `multiplier` split with cache savings from both engines' cached tokens: neither engine's timing, nor vLLM's prefix-caching setting, is applied to the other engine's share. Models are matched on the name after the last `/`, as elsewhere in inference cost tracking, so `org/model` from one engine and `model` from the other count as the same model.
 
 When `CURRENT_CLUSTER_ID_FILTER_ENABLED` is set, every inference query is limited to this cluster's series, for both engines.
 
