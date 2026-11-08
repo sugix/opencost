@@ -1,0 +1,389 @@
+{
+  "skus": [
+    {
+      "name": "services/6F81-5844-456A/skus/8CCB-D501-DA04",
+      "skuId": "8CCB-D501-DA04",
+      "description": "TpuV5e running in Americas",
+      "category": {
+        "serviceDisplayName": "Compute Engine",
+        "resourceFamily": "Compute",
+        "resourceGroup": "TPU",
+        "usageType": "OnDemand"
+      },
+      "serviceRegions": [
+        "us-central1",
+        "us-east1",
+        "us-west1"
+      ],
+      "pricingInfo": [
+        {
+          "summary": "",
+          "pricingExpression": {
+            "usageUnit": "h",
+            "displayQuantity": 1,
+            "tieredRates": [
+              {
+                "startUsageAmount": 0,
+                "unitPrice": {
+                  "currencyCode": "USD",
+                  "units": "1",
+                  "nanos": 200000000
+                }
+              }
+            ],
+            "usageUnitDescription": "hour",
+            "baseUnit": "s",
+            "baseUnitDescription": "second",
+            "baseUnitConversionFactor": 3600
+          },
+          "currencyConversionRate": 1,
+          "effectiveTime": "2026-11-08T08:00:00Z"
+        }
+      ],
+      "serviceProviderName": "Google",
+      "geoTaxonomy": {
+        "type": "MULTI_REGIONAL",
+        "regions": [
+          "us-central1",
+          "us-west1",
+          "us-east1"
+        ]
+      }
+    },
+    {
+      "name": "services/6F81-5844-456A/skus/A9FF-6143-F24B",
+      "skuId": "A9FF-6143-F24B",
+      "description": "TpuV5e attached to Spot Preemptible VMs running in Americas",
+      "category": {
+        "serviceDisplayName": "Compute Engine",
+        "resourceFamily": "Compute",
+        "resourceGroup": "TPU",
+        "usageType": "Preemptible"
+      },
+      "serviceRegions": [
+        "us-central1",
+        "us-east1",
+        "us-west1"
+      ],
+      "pricingInfo": [
+        {
+          "summary": "",
+          "pricingExpression": {
+            "usageUnit": "h",
+            "displayQuantity": 1,
+            "tieredRates": [
+              {
+                "startUsageAmount": 0,
+                "unitPrice": {
+                  "currencyCode": "USD",
+                  "units": "0",
+                  "nanos": 359329000
+                }
+              }
+            ],
+            "usageUnitDescription": "hour",
+            "baseUnit": "s",
+            "baseUnitDescription": "second",
+            "baseUnitConversionFactor": 3600
+          },
+          "currencyConversionRate": 1,
+          "effectiveTime": "2026-11-08T08:00:00Z"
+        }
+      ],
+      "serviceProviderName": "Google",
+      "geoTaxonomy": {
+        "type": "MULTI_REGIONAL",
+        "regions": [
+          "us-central1",
+          "us-west1",
+          "us-east1"
+        ]
+      }
+    },
+    {
+      "name": "services/6F81-5844-456A/skus/BA05-AFAC-EEDE",
+      "skuId": "BA05-AFAC-EEDE",
+      "description": "Reserved V5e TPU in Iowa in Calendar Mode",
+      "category": {
+        "serviceDisplayName": "Compute Engine",
+        "resourceFamily": "Compute",
+        "resourceGroup": "TPU",
+        "usageType": "OnDemand"
+      },
+      "serviceRegions": [
+        "us-central1"
+      ],
+      "pricingInfo": [
+        {
+          "summary": "",
+          "pricingExpression": {
+            "usageUnit": "h",
+            "displayQuantity": 1,
+            "tieredRates": [
+              {
+                "startUsageAmount": 0,
+                "unitPrice": {
+                  "currencyCode": "USD",
+                  "units": "0",
+                  "nanos": 840000000
+                }
+              }
+            ],
+            "usageUnitDescription": "hour",
+            "baseUnit": "s",
+            "baseUnitDescription": "second",
+            "baseUnitConversionFactor": 3600
+          },
+          "currencyConversionRate": 1,
+          "effectiveTime": "2026-11-08T08:00:00Z"
+        }
+      ],
+      "serviceProviderName": "Google",
+      "geoTaxonomy": {
+        "type": "REGIONAL",
+        "regions": [
+          "us-central1"
+        ]
+      }
+    },
+    {
+      "name": "services/6F81-5844-456A/skus/6A0E-FCEE-6E33",
+      "skuId": "6A0E-FCEE-6E33",
+      "description": "Commitment v1: TpuV5e running in Americas for 1 Year",
+      "category": {
+        "serviceDisplayName": "Compute Engine",
+        "resourceFamily": "Compute",
+        "resourceGroup": "TPU",
+        "usageType": "Commit1Yr"
+      },
+      "serviceRegions": [
+        "us-central1",
+        "us-east1",
+        "us-west1"
+      ],
+      "pricingInfo": [
+        {
+          "summary": "",
+          "pricingExpression": {
+            "usageUnit": "h",
+            "displayQuantity": 1,
+            "tieredRates": [
+              {
+                "startUsageAmount": 0,
+                "unitPrice": {
+                  "currencyCode": "USD",
+                  "units": "0",
+                  "nanos": 840000000
+                }
+              }
+            ],
+            "usageUnitDescription": "hour",
+            "baseUnit": "s",
+            "baseUnitDescription": "second",
+            "baseUnitConversionFactor": 3600
+          },
+          "currencyConversionRate": 1,
+          "effectiveTime": "2026-11-08T08:00:00Z"
+        }
+      ],
+      "serviceProviderName": "Google",
+      "geoTaxonomy": {
+        "type": "MULTI_REGIONAL",
+        "regions": [
+          "us-central1",
+          "us-west1",
+          "us-east1"
+        ]
+      }
+    },
+    {
+      "name": "services/6F81-5844-456A/skus/2549-F208-72FA",
+      "skuId": "2549-F208-72FA",
+      "description": "TpuV6e running in Dallas",
+      "category": {
+        "serviceDisplayName": "Compute Engine",
+        "resourceFamily": "Compute",
+        "resourceGroup": "TPU",
+        "usageType": "OnDemand"
+      },
+      "serviceRegions": [
+        "us-south1"
+      ],
+      "pricingInfo": [
+        {
+          "summary": "",
+          "pricingExpression": {
+            "usageUnit": "h",
+            "displayQuantity": 1,
+            "tieredRates": [
+              {
+                "startUsageAmount": 0,
+                "unitPrice": {
+                  "currencyCode": "USD",
+                  "units": "2",
+                  "nanos": 700000000
+                }
+              }
+            ],
+            "usageUnitDescription": "hour",
+            "baseUnit": "s",
+            "baseUnitDescription": "second",
+            "baseUnitConversionFactor": 3600
+          },
+          "currencyConversionRate": 1,
+          "effectiveTime": "2026-11-08T08:00:00Z"
+        }
+      ],
+      "serviceProviderName": "Google",
+      "geoTaxonomy": {
+        "type": "REGIONAL",
+        "regions": [
+          "us-south1"
+        ]
+      }
+    },
+    {
+      "name": "services/6F81-5844-456A/skus/3110-B9A3-085C",
+      "skuId": "3110-B9A3-085C",
+      "description": "Capacity Optimized TpuV6e running in London",
+      "category": {
+        "serviceDisplayName": "Compute Engine",
+        "resourceFamily": "Compute",
+        "resourceGroup": "TPU",
+        "usageType": "OnDemand"
+      },
+      "serviceRegions": [
+        "europe-west2"
+      ],
+      "pricingInfo": [
+        {
+          "summary": "",
+          "pricingExpression": {
+            "usageUnit": "h",
+            "displayQuantity": 1,
+            "tieredRates": [
+              {
+                "startUsageAmount": 0,
+                "unitPrice": {
+                  "currencyCode": "USD",
+                  "units": "3",
+                  "nanos": 240000000
+                }
+              }
+            ],
+            "usageUnitDescription": "hour",
+            "baseUnit": "s",
+            "baseUnitDescription": "second",
+            "baseUnitConversionFactor": 3600
+          },
+          "currencyConversionRate": 1,
+          "effectiveTime": "2026-11-08T08:00:00Z"
+        }
+      ],
+      "serviceProviderName": "Google",
+      "geoTaxonomy": {
+        "type": "REGIONAL",
+        "regions": [
+          "europe-west2"
+        ]
+      }
+    },
+    {
+      "name": "services/6F81-5844-456A/skus/0F71-4391-B6CA",
+      "skuId": "0F71-4391-B6CA",
+      "description": "TPU7x running in Americas",
+      "category": {
+        "serviceDisplayName": "Compute Engine",
+        "resourceFamily": "Compute",
+        "resourceGroup": "TPU",
+        "usageType": "OnDemand"
+      },
+      "serviceRegions": [
+        "us-west1",
+        "us-central1",
+        "us-east1"
+      ],
+      "pricingInfo": [
+        {
+          "summary": "",
+          "pricingExpression": {
+            "usageUnit": "h",
+            "displayQuantity": 1,
+            "tieredRates": [
+              {
+                "startUsageAmount": 0,
+                "unitPrice": {
+                  "currencyCode": "USD",
+                  "units": "12",
+                  "nanos": 0
+                }
+              }
+            ],
+            "usageUnitDescription": "hour",
+            "baseUnit": "s",
+            "baseUnitDescription": "second",
+            "baseUnitConversionFactor": 3600
+          },
+          "currencyConversionRate": 1,
+          "effectiveTime": "2026-11-08T08:00:00Z"
+        }
+      ],
+      "serviceProviderName": "Google",
+      "geoTaxonomy": {
+        "type": "MULTI_REGIONAL",
+        "regions": [
+          "us-west1",
+          "us-central1",
+          "us-east1"
+        ]
+      }
+    },
+    {
+      "name": "services/6F81-5844-456A/skus/07E9-7D30-283D",
+      "skuId": "07E9-7D30-283D",
+      "description": "DWS Defined Duration TPU7x running in Columbus",
+      "category": {
+        "serviceDisplayName": "Compute Engine",
+        "resourceFamily": "Compute",
+        "resourceGroup": "TPU",
+        "usageType": "OnDemand"
+      },
+      "serviceRegions": [
+        "us-east5"
+      ],
+      "pricingInfo": [
+        {
+          "summary": "",
+          "pricingExpression": {
+            "usageUnit": "h",
+            "displayQuantity": 1,
+            "tieredRates": [
+              {
+                "startUsageAmount": 0,
+                "unitPrice": {
+                  "currencyCode": "USD",
+                  "units": "6",
+                  "nanos": 0
+                }
+              }
+            ],
+            "usageUnitDescription": "hour",
+            "baseUnit": "s",
+            "baseUnitDescription": "second",
+            "baseUnitConversionFactor": 3600
+          },
+          "currencyConversionRate": 1,
+          "effectiveTime": "2026-11-08T08:00:00Z"
+        }
+      ],
+      "serviceProviderName": "Google",
+      "geoTaxonomy": {
+        "type": "REGIONAL",
+        "regions": [
+          "us-east5"
+        ]
+      }
+    }
+  ],
+  "nextPageToken": ""
+}

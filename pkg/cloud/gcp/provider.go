@@ -721,6 +721,13 @@ func (gcp *GCP) parsePage(r io.Reader, inputKeys map[string]models.Key, pvKeys m
 					continue
 				}
 
+				if instanceType == "tpu" {
+					if err := gcp.addTPUPricing(product, usageType, inputKeys, gcpPricingList); err != nil {
+						return nil, "", err
+					}
+					continue
+				}
+
 				if (instanceType == "ram" || instanceType == "cpu") && strings.Contains(strings.ToUpper(product.Description), "CUSTOM") {
 					instanceType = "custom"
 				}
@@ -1554,6 +1561,11 @@ func (gcp *gcpKey) GPUType() string {
 		log.Debugf("GPU of type: \"%s\" found", t)
 		return t + "," + usageType
 	}
+	if t, ok := gcp.Labels[GKE_TPU_TAG]; ok {
+		usageType := getUsageType(gcp.Labels)
+		log.Debugf("TPU of type: \"%s\" found", t)
+		return t + "," + usageType
+	}
 	return ""
 }
 
@@ -1604,6 +1616,9 @@ func (gcp *gcpKey) Features() string {
 	usageType := getUsageType(gcp.Labels)
 
 	if _, ok := gcp.Labels[GKE_GPU_TAG]; ok {
+		return region + "," + instanceType + "," + usageType + "," + "gpu"
+	}
+	if _, ok := gcp.Labels[GKE_TPU_TAG]; ok {
 		return region + "," + instanceType + "," + usageType + "," + "gpu"
 	}
 
