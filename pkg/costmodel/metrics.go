@@ -112,6 +112,19 @@ func (cim ClusterInfoMetric) Write(m *dto.Metric) error {
 // returns a pointer to the string provided
 func toStringPtr(s string) *string { return &s }
 
+// costOutlierFactor is how many times a node's running average a CPU or RAM
+// price may reach before the data point is treated as a spike and not recorded.
+const costOutlierFactor float64 = 30
+
+// isCostOutlier reports whether cost is a spike against a node's running
+// average. A cost at the cutoff is not an outlier, so a node whose price is
+// legitimately zero (a TPU node, where the host is included in the chip price,
+// or custom pricing of 0) is still recorded: with a strict "<", 0 < 30*0 was
+// false and the node's CPU, RAM and total cost were never emitted.
+func isCostOutlier(cost, average float64) bool {
+	return cost > costOutlierFactor*average
+}
+
 //--------------------------------------------------------------------------
 //  Cost Model Metrics Initialization
 //--------------------------------------------------------------------------
@@ -587,28 +600,27 @@ func (cmme *CostModelMetricsEmitter) Start() bool {
 				cmme.GPUCountRecorder.WithLabelValues(nodeName, nodeName, nodeType, nodeRegion, node.ProviderID, node.ArchType, nodeUID).Set(gpu)
 				cmme.GPUPriceRecorder.WithLabelValues(nodeName, nodeName, nodeType, nodeRegion, node.ProviderID, node.ArchType, nodeUID).Set(gpuCost)
 
-				const outlierFactor float64 = 30
 				// don't record cpuCost, ramCost, or gpuCost in the case of wild outliers
 				// k8s api sometimes causes cost spikes as described here:
 				// https://github.com/opencost/opencost/issues/927
-				cpuOutlierCutoff := outlierFactor * avgCosts.CpuCostAverage
-				if cpuCost < cpuOutlierCutoff {
+				cpuOutlier := isCostOutlier(cpuCost, avgCosts.CpuCostAverage)
+				ramOutlier := isCostOutlier(ramCost, avgCosts.RamCostAverage)
+				if !cpuOutlier {
 					cmme.CPUPriceRecorder.WithLabelValues(nodeName, nodeName, nodeType, nodeRegion, node.ProviderID, node.ArchType, nodeUID).Set(cpuCost)
 					avgCosts.CpuCostAverage = (avgCosts.CpuCostAverage*avgCosts.NumCpuDataPoints + cpuCost) / (avgCosts.NumCpuDataPoints + 1)
 					avgCosts.NumCpuDataPoints += 1
 				} else {
-					log.Debugf("CPU cost outlier detected; skipping data point: %s had %f as cost, which is above %f.", nodeName, cpuCost, cpuOutlierCutoff)
+					log.Debugf("CPU cost outlier detected; skipping data point: %s had %f as cost, over %.0fx its average %f.", nodeName, cpuCost, costOutlierFactor, avgCosts.CpuCostAverage)
 				}
-				ramOutlierCutoff := outlierFactor * avgCosts.RamCostAverage
-				if ramCost < ramOutlierCutoff {
+				if !ramOutlier {
 					cmme.RAMPriceRecorder.WithLabelValues(nodeName, nodeName, nodeType, nodeRegion, node.ProviderID, node.ArchType, nodeUID).Set(ramCost)
 					avgCosts.RamCostAverage = (avgCosts.RamCostAverage*avgCosts.NumRamDataPoints + ramCost) / (avgCosts.NumRamDataPoints + 1)
 					avgCosts.NumRamDataPoints += 1
 				} else {
-					log.Debugf("RAM cost outlier detected; skipping data point: %s had %f as cost, which is above %f.", nodeName, ramCost, ramOutlierCutoff)
+					log.Debugf("RAM cost outlier detected; skipping data point: %s had %f as cost, over %.0fx its average %f.", nodeName, ramCost, costOutlierFactor, avgCosts.RamCostAverage)
 				}
 				// skip redording totalCost if any constituent costs were outliers
-				if cpuCost < cpuOutlierCutoff && ramCost < ramOutlierCutoff {
+				if !cpuOutlier && !ramOutlier {
 					cmme.NodeTotalPriceRecorder.WithLabelValues(nodeName, nodeName, nodeType, nodeRegion, node.ProviderID, node.ArchType, nodeUID).Set(totalCost)
 				} else {
 					log.Debugf("CPU and RAM outlier detected, not recording node %s total cost %f", nodeName, totalCost)
